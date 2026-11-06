@@ -36,4 +36,3 @@ export interface ConversionRecord {
   readonly fxRate: FxRate;
   readonly convertedAt: string;
 }
-

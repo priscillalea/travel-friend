@@ -10,6 +10,7 @@ import {
   FxRateRepository,
   getFxRateAgeMinutes,
   invertFxRate,
+  LiveFxRateProvider,
   multiplyMoney,
   subtractMoney,
   sumMoney,
@@ -55,18 +56,15 @@ describe('Módulo de dinheiro e câmbio (Etapa 2)', () => {
       const twentyItems = Array.from({ length: 20 }, (_, idx) =>
         createMoney(199 + (idx % 5) * 25, 'GBP'),
       );
-      // 4 grupos de (199 + 224 + 249 + 274 + 299) = 4 * 1245 = 4980 pence (£49.80)
       const totalGbp = sumMoney(twentyItems, 'GBP');
       expect(totalGbp.amountMinor).toBe(4980);
 
-      // 4980 * 7.24 = 36055.2 -> arredonda HALF_UP para 36055 centavos (R$ 360,55)
       const totalBrl = convertMoney(totalGbp, '7.24', 'BRL');
       expect(totalBrl).toEqual({ amountMinor: 36055, currency: 'BRL' });
     });
 
     it('lida com cotações de muitas casas decimais e modos de arredondamento explícitos', () => {
-      const item = createMoney(333, 'GBP'); // £3.33
-      // 333 * 7.24859381 = 2413.78173873 -> 2414 centavos em HALF_UP
+      const item = createMoney(333, 'GBP');
       const halfUp = convertMoney(item, '7.24859381', 'BRL', 'HALF_UP');
       const floor = convertMoney(item, '7.24859381', 'BRL', 'FLOOR');
       const ceil = convertMoney(item, '7.24859381', 'BRL', 'CEIL');
@@ -75,7 +73,6 @@ describe('Módulo de dinheiro e câmbio (Etapa 2)', () => {
       expect(floor.amountMinor).toBe(2413);
       expect(ceil.amountMinor).toBe(2414);
 
-      // Caso de empate exato 0.5: 15 / 10 = 1.5 e 25 / 10 = 2.5
       expect(divideAndRoundBigInt(15n, 10n, 'HALF_UP')).toBe(2n);
       expect(divideAndRoundBigInt(15n, 10n, 'HALF_EVEN')).toBe(2n);
       expect(divideAndRoundBigInt(25n, 10n, 'HALF_UP')).toBe(3n);
@@ -111,12 +108,37 @@ describe('Módulo de dinheiro e câmbio (Etapa 2)', () => {
     });
   });
 
-  describe('Repositório FxRate, cache local e modo offline', () => {
+  describe('Repositório FxRate, LiveFxRateProvider e modo offline', () => {
+    it('busca cotação comercial real via LiveFxRateProvider (AwesomeAPI / ECB)', async () => {
+      const mockFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          GBPBRL: {
+            bid: '7.3145',
+            timestamp: '1793962800',
+          },
+        }),
+      });
+
+      const liveProvider = new LiveFxRateProvider({
+        fetchFn: mockFetch,
+        fallbackProvider: null,
+      });
+
+      const rate = await liveProvider.fetchRate('GBP', 'BRL');
+      expect(rate.pair).toBe('GBP/BRL');
+      expect(rate.rateText).toBe('7.3145');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://economia.awesomeapi.com.br/json/last/GBP-BRL',
+      );
+    });
+
     it('busca do provedor, salva em cache e usa fallback offline quando sem conexão', async () => {
       const provider = new FakeFxRateProvider();
       const repo = new FxRateRepository({
         provider,
-        ttlMs: 60 * 60 * 1000, // 1 hora
+        ttlMs: 60 * 60 * 1000,
       });
 
       const t0 = new Date('2026-11-06T09:30:00.000Z');
@@ -126,12 +148,10 @@ describe('Módulo de dinheiro e câmbio (Etapa 2)', () => {
       expect(first.fxRate.rateText).toBe('7.24');
       expect(getFxRateAgeMinutes(first.fxRate, t0)).toBe(30);
 
-      // Dentro do TTL deve vir do cache sem bater no provedor
       const second = await repo.getRate('GBP', 'BRL', { now: t0 });
       expect(second.source).toBe('cache');
       expect(second.isStale).toBe(false);
 
-      // Simula queda de internet após expirar TTL (2 horas depois)
       provider.setOfflineFailure(true);
       const tOffline = new Date('2026-11-06T11:30:00.000Z');
       const fallback = await repo.getRate('GBP', 'BRL', { now: tOffline });
@@ -151,4 +171,3 @@ describe('Módulo de dinheiro e câmbio (Etapa 2)', () => {
     });
   });
 });
-

@@ -18,7 +18,6 @@ export function createFxRate(
   obtainedAt: string | Date = new Date(),
 ): FxRate {
   const rateText = typeof rateInput === 'number' ? rateInput.toString() : rateInput.trim();
-  // Valida que é um decimal positivo válido
   parseDecimalToFraction(rateText);
   const numericRate = Number(rateText);
   const timestamp = typeof obtainedAt === 'string' ? obtainedAt : obtainedAt.toISOString();
@@ -44,7 +43,6 @@ export function createFxRate(
 export function invertFxRate(fxRate: FxRate, precisionDecimals = 8): FxRate {
   const { numerator, denominator } = parseDecimalToFraction(fxRate.rateText);
   const scale = 10n ** BigInt(precisionDecimals);
-  // 1 / (numerator / denominator) = denominator / numerator
   const scaledInverse = divideAndRoundBigInt(denominator * scale, numerator, 'HALF_UP');
   const intPart = scaledInverse / scale;
   const fracPart = (scaledInverse % scale).toString().padStart(precisionDecimals, '0');
@@ -101,7 +99,7 @@ export class InMemoryFxRateCacheStore implements FxRateCacheStore {
 }
 
 /**
- * Cotações ILUSTRATIVAS de exemplo para testes e modo offline inicial.
+ * Cotações ILUSTRATIVAS de exemplo para testes e fallback offline inicial.
  * (Marcadas claramente como fixture conforme docs/TROCADO_SPEC.md).
  */
 export const EXAMPLE_FX_FIXTURES: Readonly<
@@ -168,6 +166,85 @@ export class FakeFxRateProvider implements FxRateProvider {
   }
 }
 
+export type FetchLike = (url: string) => Promise<{
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+}>;
+
+interface AwesomeApiEntry {
+  bid?: string;
+  create_date?: string;
+  timestamp?: string;
+}
+
+interface FrankfurterResponse {
+  date?: string;
+  rates?: Record<string, number>;
+}
+
+/**
+ * Provedor de cotação comercial em tempo real (mesma cotação comercial exibida no Google):
+ * 1. Tenta AwesomeAPI (economia.awesomeapi.com.br — atualizada a cada 30s, sem chave)
+ * 2. Tenta Frankfurter / Banco Central Europeu (api.frankfurter.dev) como segundo provedor
+ * 3. Faz fallback opcional para FakeFxRateProvider quando totalmente offline sem cache prévio.
+ */
+export class LiveFxRateProvider implements FxRateProvider {
+  private readonly fetchFn: FetchLike;
+  private readonly fallbackProvider: FxRateProvider | null;
+
+  constructor(options?: { fetchFn?: FetchLike; fallbackProvider?: FxRateProvider | null }) {
+    this.fetchFn = options?.fetchFn ?? (globalThis.fetch as unknown as FetchLike);
+    this.fallbackProvider =
+      options?.fallbackProvider !== undefined ? options.fallbackProvider : new FakeFxRateProvider();
+  }
+
+  async fetchRate(base: CurrencyCode, quote: CurrencyCode): Promise<FxRate> {
+    if (base === quote) {
+      return createFxRate(base, quote, '1', new Date().toISOString());
+    }
+
+    // 1. Tenta AwesomeAPI (câmbio comercial em tempo real)
+    try {
+      const url = `https://economia.awesomeapi.com.br/json/last/${base}-${quote}`;
+      const response = await this.fetchFn(url);
+      if (response.ok) {
+        const data = (await response.json()) as Record<string, AwesomeApiEntry>;
+        const entry = data[`${base}${quote}`];
+        if (entry?.bid) {
+          const obtainedAt = entry.timestamp
+            ? new Date(Number(entry.timestamp) * 1000).toISOString()
+            : new Date().toISOString();
+          return createFxRate(base, quote, entry.bid, obtainedAt);
+        }
+      }
+    } catch {
+      // Prossegue para o segundo provedor
+    }
+
+    // 2. Tenta Frankfurter (Banco Central Europeu)
+    try {
+      const url = `https://api.frankfurter.dev/v1/latest?base=${base}&symbols=${quote}`;
+      const response = await this.fetchFn(url);
+      if (response.ok) {
+        const data = (await response.json()) as FrankfurterResponse;
+        const rateVal = data.rates?.[quote];
+        if (typeof rateVal === 'number' && rateVal > 0) {
+          return createFxRate(base, quote, rateVal.toString(), new Date().toISOString());
+        }
+      }
+    } catch {
+      // Prossegue para o fallback offline se configurado
+    }
+
+    if (this.fallbackProvider) {
+      return this.fallbackProvider.fetchRate(base, quote);
+    }
+
+    throw new Error(`Não foi possível obter a cotação online para ${base}/${quote}.`);
+  }
+}
+
 export interface FxRateLookupResult {
   readonly fxRate: FxRate;
   readonly source: 'provider' | 'cache';
@@ -211,10 +288,6 @@ export class FxRateRepository {
     await this.cache.set(fxRate);
   }
 
-  /**
-   * Obtém a cotação priorizando o cache fresco; se expirado ou ausente, consulta o provedor
-   * e faz fallback para o cache local caso esteja sem internet (Offline-first).
-   */
   async getRate(
     base: CurrencyCode,
     quote: CurrencyCode,
