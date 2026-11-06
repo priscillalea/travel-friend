@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Trocado",
+    "slug": "trocado",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "trocado",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0B3C5D"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "app.trocado.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0B3C5D"
+      },
+      "package": "app.trocado.mobile"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ]
+  }
+}
+
