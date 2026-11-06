@@ -3,6 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect } from 'react';
 import { PhaseProvider } from '../src/context/PhaseContext';
+import { ShoppingListProvider } from '../src/context/ShoppingListContext';
 import { useTrocadoFonts } from '../src/theme/fonts';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
@@ -22,10 +23,13 @@ export default function RootLayout() {
 
   return (
     <PhaseProvider initialPhase="durante">
-      <StatusBar style="dark" />
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="(tabs)" />
-      </Stack>
+      <ShoppingListProvider>
+        <StatusBar style="dark" />
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="scanner" options={{ presentation: 'modal' }} />
+        </Stack>
+      </ShoppingListProvider>
     </PhaseProvider>
   );
 }

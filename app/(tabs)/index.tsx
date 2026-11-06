@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'expo-router';
+import React, { useState } from 'react';
 import {
   Pressable,
   SafeAreaView,
@@ -13,101 +14,42 @@ import { PhaseSwitch } from '../../src/components/PhaseSwitch';
 import { PriceRow } from '../../src/components/PriceRow';
 import { TotalBar } from '../../src/components/TotalBar';
 import { useTripPhase } from '../../src/context/PhaseContext';
-import {
-  EXAMPLE_LIST_ID,
-  formatRateTimestamp,
-  InMemoryShoppingListStorage,
-  parseUserPriceToMinor,
-  ShoppingListService,
-  ShoppingListView,
-} from '../../src/domain/lists';
-import { CURRENCY_SYMBOLS, FxRateRepository, LiveFxRateProvider } from '../../src/domain/money';
+import { useShoppingList } from '../../src/context/ShoppingListContext';
+import { formatRateTimestamp, parseUserPriceToMinor } from '../../src/domain/lists';
+import { CURRENCY_SYMBOLS } from '../../src/domain/money';
 import { colors, layout, radii, spacing, typography } from '../../src/theme';
 
 export default function ListasTabScreen() {
+  const router = useRouter();
   const { phase, setPhase } = useTripPhase();
+  const {
+    listView,
+    addItem,
+    incrementItem,
+    decrementItem,
+    invertCurrencies,
+    toggleFreezeRate,
+    refreshLiveRate,
+  } = useShoppingList();
 
-  const { service, fxRepository } = useMemo(() => {
-    const fxRepo = new FxRateRepository({
-      provider: new LiveFxRateProvider(),
-    });
-    const listService = new ShoppingListService({
-      storage: new InMemoryShoppingListStorage(),
-      fxRepository: fxRepo,
-    });
-    return { service: listService, fxRepository: fxRepo };
-  }, []);
-
-  const [listView, setListView] = useState<ShoppingListView | null>(null);
   const [newItemName, setNewItemName] = useState('');
   const [newItemPrice, setNewItemPrice] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const refreshView = useCallback(async () => {
-    const view = await service.getListView(EXAMPLE_LIST_ID);
-    setListView(view);
-  }, [service]);
-
-  useEffect(() => {
-    let active = true;
-    service
-      .seedExampleListIfEmpty(EXAMPLE_LIST_ID)
-      .then(() => service.getListView(EXAMPLE_LIST_ID))
-      .then((view) => {
-        if (active) {
-          setListView(view);
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [service]);
 
   const handleAddItem = async () => {
     setErrorMessage(null);
     try {
       const priceMinor = parseUserPriceToMinor(newItemPrice);
-      await service.addItem({
-        listId: EXAMPLE_LIST_ID,
+      await addItem({
         name: newItemName,
-        quantity: 1,
         unitPriceMinor: priceMinor,
+        quantity: 1,
       });
       setNewItemName('');
       setNewItemPrice('');
-      await refreshView();
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao adicionar item.');
     }
-  };
-
-  const handleIncrement = async (itemId: string) => {
-    await service.updateItemQuantity(EXAMPLE_LIST_ID, itemId, 1);
-    await refreshView();
-  };
-
-  const handleDecrement = async (itemId: string) => {
-    await service.updateItemQuantity(EXAMPLE_LIST_ID, itemId, -1);
-    await refreshView();
-  };
-
-  const handleInvertCurrencies = async () => {
-    await service.invertCurrencies(EXAMPLE_LIST_ID);
-    await refreshView();
-  };
-
-  const handleToggleFreeze = async () => {
-    await service.toggleFreezeRate(EXAMPLE_LIST_ID);
-    await refreshView();
-  };
-
-  const handleRefreshLiveRate = async () => {
-    if (!listView) return;
-    await fxRepository.getRate(listView.list.sourceCurrency, listView.list.targetCurrency, {
-      forceRefresh: true,
-    });
-    await refreshView();
   };
 
   if (!listView) {
@@ -125,19 +67,31 @@ export default function ListasTabScreen() {
       <View style={styles.container}>
         <PhaseSwitch value={phase} onChange={setPhase} style={styles.phaseSwitch} />
 
-        <View style={styles.headerBlock}>
-          <Text style={styles.title}>{list.storeName}</Text>
-          <Text style={styles.subtitle}> Valores de exemplo · funciona sem internet</Text>
+        <View style={styles.headerRow}>
+          <View style={styles.headerBlock}>
+            <Text style={styles.title}>{list.storeName}</Text>
+            <Text style={styles.subtitle}>Valores de exemplo · funciona sem internet</Text>
+          </View>
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Escanear etiqueta com a câmera"
+            onPress={() => router.push('/scanner')}
+            style={styles.scanButton}
+            testID="open-scanner-button"
+          >
+            <Text style={styles.scanButtonText}>Escanear etiqueta</Text>
+          </Pressable>
         </View>
 
         <CurrencyPair
           sourceCurrency={list.sourceCurrency}
           targetCurrency={list.targetCurrency}
-          onInvert={handleInvertCurrencies}
+          onInvert={invertCurrencies}
         />
 
         <View style={styles.rateBar}>
-          <Pressable onPress={handleRefreshLiveRate} style={styles.rateTextGroup}>
+          <Pressable onPress={refreshLiveRate} style={styles.rateTextGroup}>
             <Text style={styles.rateLabel}>
               {sourceSymbol}1 = {targetSymbol} {formattedRateValue} · atualizada às{' '}
               {formatRateTimestamp(activeRate)}
@@ -147,7 +101,7 @@ export default function ListasTabScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ selected: isRateFrozen }}
-            onPress={handleToggleFreeze}
+            onPress={toggleFreezeRate}
             style={[styles.freezeChip, isRateFrozen && styles.freezeChipActive]}
             testID="freeze-rate-button"
           >
@@ -166,8 +120,8 @@ export default function ListasTabScreen() {
             <PriceRow
               key={entry.item.id}
               entry={entry}
-              onIncrement={handleIncrement}
-              onDecrement={handleDecrement}
+              onIncrement={incrementItem}
+              onDecrement={decrementItem}
               isLast={idx === items.length - 1}
             />
           ))}
@@ -230,8 +184,15 @@ const styles = StyleSheet.create({
   phaseSwitch: {
     marginBottom: spacing.sm,
   },
-  headerBlock: {
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  headerBlock: {
+    flex: 1,
   },
   title: {
     ...typography.screenTitle,
@@ -241,6 +202,16 @@ const styles = StyleSheet.create({
     ...typography.labelSmall,
     color: colors.text.secondary,
     marginTop: 2,
+  },
+  scanButton: {
+    backgroundColor: colors.brand.primary,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  scanButtonText: {
+    ...typography.labelStrong,
+    color: colors.text.inverse,
   },
   rateBar: {
     flexDirection: 'row',
