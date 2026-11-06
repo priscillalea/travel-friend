@@ -2,9 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { BottomSheet } from '../../src/components/BottomSheet';
 import { OfflineBanner } from '../../src/components/OfflineBanner';
+import { PhaseSwitch } from '../../src/components/PhaseSwitch';
 import { PlaceCard } from '../../src/components/PlaceCard';
 import { PriceVoteCard } from '../../src/components/PriceVoteCard';
+import { TourCard } from '../../src/components/TourCard';
+import { useItinerary } from '../../src/context/ItineraryContext';
+import { useTripPhase } from '../../src/context/PhaseContext';
 import { useShoppingList } from '../../src/context/ShoppingListContext';
+import { TourFilter } from '../../src/domain/itinerary';
 import { createFxRate, formatMoney } from '../../src/domain/money';
 import {
   CheapFoodOption,
@@ -16,6 +21,13 @@ import { PriceVoteChoice, SyncQueueService } from '../../src/domain/sync';
 import { colors, layout, radii, spacing, typography } from '../../src/theme';
 
 type ComerSubMode = 'mapa' | 'offline';
+
+const TOUR_FILTERS: ReadonlyArray<{ id: TourFilter; label: string }> = [
+  { id: 'todos', label: 'Todos' },
+  { id: 'gratis', label: 'Grátis' },
+  { id: 'ate_20', label: 'Até £20' },
+  { id: 'ar_livre', label: 'Ao ar livre' },
+];
 
 const PRICE_CEILING_FILTERS: ReadonlyArray<{ label: string; maxMinor?: number }> = [
   { label: 'Perto de mim', maxMinor: undefined },
@@ -32,6 +44,8 @@ const PIN_POSITIONS: ReadonlyArray<{ top: `${number}%`; left: `${number}%` }> = 
 ];
 
 export default function ComerTabScreen() {
+  const { phase, setPhase } = useTripPhase();
+  const { tourFilter, setTourFilter, filteredTours, addTourToPlan } = useItinerary();
   const { listView } = useShoppingList();
   const placesService = useMemo(() => new LocalPlacesApiService(), []);
   const syncService = useMemo(() => new SyncQueueService(), []);
@@ -41,8 +55,8 @@ export default function ComerTabScreen() {
   const [options, setOptions] = useState<readonly CheapFoodOption[]>([]);
   const [comparison, setComparison] = useState<WalkComparisonSummary | null>(null);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [addedTourMessage, setAddedTourMessage] = useState<string | null>(null);
 
-  // Estado da visão Offline & Comunidade (Etapa 5)
   const [isOffline, setIsOffline] = useState(true);
   const [pricePoint, setPricePoint] = useState(() => syncService.getPricePoint());
   const [pendingSyncCount, setPendingSyncCount] = useState(() => syncService.getPendingCount());
@@ -70,6 +84,61 @@ export default function ComerTabScreen() {
       active = false;
     };
   }, [placesService, maxPriceMinor, activeRate]);
+
+  // Fase "Antes": Passeios (trocado_v3_1_passeios.png)
+  if (phase === 'antes') {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.offlineContainer}
+          showsVerticalScrollIndicator={false}
+        >
+          <PhaseSwitch value={phase} onChange={setPhase} style={styles.phaseSwitch} />
+
+          <Text style={styles.offlineScreenTitle}>Passeios</Text>
+
+          <View style={styles.tourFiltersRow}>
+            {TOUR_FILTERS.map((f) => {
+              const isSelected = tourFilter === f.id;
+              return (
+                <Pressable
+                  key={f.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
+                  onPress={() => setTourFilter(f.id)}
+                  style={[styles.tourFilterChip, isSelected && styles.tourFilterChipActive]}
+                  testID={`tour-filter-${f.id}`}
+                >
+                  <Text
+                    style={[
+                      styles.tourFilterChipText,
+                      isSelected && styles.tourFilterChipTextActive,
+                    ]}
+                  >
+                    {f.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {addedTourMessage ? <Text style={styles.addedFeedback}>{addedTourMessage}</Text> : null}
+
+          {filteredTours.map((tour) => (
+            <TourCard
+              key={tour.id}
+              tour={tour}
+              onAddToPlan={(t) => {
+                addTourToPlan(t);
+                setAddedTourMessage(`"${t.title}" adicionado ao plano!`);
+              }}
+            />
+          ))}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   const handleVote = (choice: PriceVoteChoice) => {
     const updated = syncService.submitPriceVote(choice);
@@ -265,10 +334,42 @@ const styles = StyleSheet.create({
   scroll: {
     flex: 1,
   },
+  phaseSwitch: {
+    marginBottom: spacing.md,
+  },
   offlineContainer: {
     paddingHorizontal: layout.screenPaddingHorizontal,
-    paddingTop: spacing.md,
+    paddingTop: spacing.sm,
     paddingBottom: spacing.xl,
+  },
+  tourFiltersRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  tourFilterChip: {
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderWidth: 1.5,
+    borderColor: colors.brand.primary,
+    backgroundColor: 'transparent',
+  },
+  tourFilterChipActive: {
+    backgroundColor: colors.brand.primary,
+  },
+  tourFilterChipText: {
+    ...typography.labelStrong,
+    color: colors.brand.primary,
+  },
+  tourFilterChipTextActive: {
+    color: colors.text.inverse,
+  },
+  addedFeedback: {
+    ...typography.labelStrong,
+    color: colors.brand.savings,
+    marginBottom: spacing.sm,
   },
   topSwitchBar: {
     flexDirection: 'row',
@@ -293,7 +394,7 @@ const styles = StyleSheet.create({
     fontSize: 32,
     lineHeight: 36,
     color: colors.text.primary,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
   },
   packCard: {
     backgroundColor: colors.background.card,

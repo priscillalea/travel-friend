@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { BookingCard } from '../../src/components/BookingCard';
 import { BudgetBar } from '../../src/components/BudgetBar';
 import { CategoryCard } from '../../src/components/CategoryCard';
 import { PhaseSwitch } from '../../src/components/PhaseSwitch';
+import { useItinerary } from '../../src/context/ItineraryContext';
 import { useTripPhase } from '../../src/context/PhaseContext';
 import { useShoppingList } from '../../src/context/ShoppingListContext';
 import {
@@ -15,14 +17,17 @@ import { createFxRate, createMoney, formatMoney } from '../../src/domain/money';
 import { colors, layout, radii, spacing, typography } from '../../src/theme';
 
 type DuringSubView = 'orcamento' | 'pagamento';
+type BeforeSubView = 'reservas' | 'orcamento_antes';
 
 export default function ViagemTabScreen() {
   const { phase, setPhase } = useTripPhase();
+  const { bookings, completeBooking } = useItinerary();
   const { listView } = useShoppingList();
 
+  const [beforeSubView, setBeforeSubView] = useState<BeforeSubView>('reservas');
   const [duringSubView, setDuringSubView] = useState<DuringSubView>('orcamento');
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState<'local' | 'dcc' | null>(null);
-  const [foodPlannedMinor, setFoodPlannedMinor] = useState(12_000); // £120 editável
+  const [foodPlannedMinor, setFoodPlannedMinor] = useState(12_000);
 
   const fxRate = useMemo(
     () => listView?.activeRate ?? createFxRate('GBP', 'BRL', '7.24', '2026-11-06T09:00:00.000Z'),
@@ -48,14 +53,44 @@ export default function ViagemTabScreen() {
   const paymentComparison = useMemo(
     () =>
       compareRealPaymentCost({
-        purchaseAmount: createMoney(1150, 'GBP'), // £11,50
+        purchaseAmount: createMoney(1150, 'GBP'),
         fxRate,
       }),
     [fxRate],
   );
 
-  // Fase "Antes": Orçamento antes da viagem (trocado_v3_4_orcamento.png)
+  // Fase "Antes": Reservas (trocado_v3_2_reservas.png) e Orçamento Antes da Viagem (trocado_v3_4_orcamento.png)
   if (phase === 'antes') {
+    if (beforeSubView === 'reservas') {
+      return (
+        <SafeAreaView style={styles.safeArea}>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.container}
+            showsVerticalScrollIndicator={false}
+          >
+            <PhaseSwitch value={phase} onChange={setPhase} style={styles.phaseSwitch} />
+
+            <View style={styles.headerRow}>
+              <Text style={styles.screenTitle}>Reservas</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setBeforeSubView('orcamento_antes')}
+                style={styles.subChip}
+                testID="open-before-budget-button"
+              >
+                <Text style={styles.subChipText}>Quanto vai custar? →</Text>
+              </Pressable>
+            </View>
+
+            {bookings.map((b) => (
+              <BookingCard key={b.id} booking={b} onActionPress={completeBooking} />
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
     return (
       <SafeAreaView style={styles.safeArea}>
         <ScrollView
@@ -65,7 +100,16 @@ export default function ViagemTabScreen() {
         >
           <PhaseSwitch value={phase} onChange={setPhase} style={styles.phaseSwitch} />
 
-          <Text style={styles.screenTitle}>{'Quanto\nvai custar?'}</Text>
+          <View style={styles.headerRow}>
+            <Text style={styles.screenTitle}>{'Quanto\nvai custar?'}</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setBeforeSubView('reservas')}
+              style={styles.subChip}
+            >
+              <Text style={styles.subChipText}>← Ver Reservas</Text>
+            </Pressable>
+          </View>
 
           <View style={styles.heroCard} testID="before-trip-budget-hero">
             <Text style={styles.heroCaption}>Previsto para {beforeBudget.totalDays} dias</Text>
@@ -109,7 +153,6 @@ export default function ViagemTabScreen() {
     );
   }
 
-  // Sub-tela "Custo real do pagamento" (trocado_v2_2_pagamento.png)
   if (duringSubView === 'pagamento') {
     const iofPercentLabel = (paymentComparison.cardConfig.iofBps / 100)
       .toFixed(1)
@@ -183,7 +226,6 @@ export default function ViagemTabScreen() {
     );
   }
 
-  // Fase "Durante" (padrão): Orçamento durante a viagem (trocado_v2_1_orcamento.png)
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
@@ -283,7 +325,7 @@ const styles = StyleSheet.create({
     fontSize: 32,
     lineHeight: 35,
     color: colors.text.primary,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.xs,
   },
   subChip: {
     backgroundColor: colors.background.secondary,
